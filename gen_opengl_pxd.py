@@ -1,3 +1,4 @@
+import argparse
 import sys
 import xml.etree.ElementTree
 
@@ -19,16 +20,42 @@ def gen_license_info(outf, node):
 def gen_type(outf, node):
   assert node.tag == 'type'
   if len(node) == 0:
+    if node.attrib['name'] == 'GLhandleARB':
+      outf.write('  ctypedef int ' + node.attrib['name'] + '\n')
+      return
+
     print('Skipping: ' + node.tag + ' ' + str(node.attrib))
     return
 
   text = ''.join(node.itertext())
 
-  if text.startswith('typedef'):
-    outf.write('  c' + text[:-1] + '\n')
+  if 'api' in node.attrib and node.attrib['api'] != 'gl':
+    print('Skipping: ' + text)
     return
 
-  if text.startswith('struct') and '{' not in text:
+  text = (text
+    .replace('khronos_intptr_t', 'int *')
+    .replace('khronos_ssize_t', 'int')
+    .replace('khronos_float_t', 'float')
+    .replace('khronos_int8_t', 'int')
+    .replace('khronos_uint8_t', 'int')
+    .replace('khronos_int16_t', 'int')
+    .replace('khronos_uint16_t', 'int')
+    .replace('khronos_int32_t', 'int')
+    .replace('khronos_uint32_t', 'int')
+    .replace('khronos_int64_t', 'int')
+    .replace('khronos_uint64_t', 'int')
+    .replace('uint64_t', 'int')
+    .replace('int64_t', 'int')
+    .replace('struct __GLsync *', 'int *')
+    .replace('(void)', '()'))
+
+  if text.startswith('struct'):
+    print('Skipping: ' + text)
+    return
+
+  if text.startswith('typedef'):
+    outf.write('  c' + text[:-1] + '\n')
     return
 
   raise NotImplementedError(text)
@@ -43,6 +70,9 @@ def gen_types(outf, node):
 
 def gen_enum(outf, node):
   assert node.tag == 'enum'
+  if 'api' in node.attrib and node.attrib['api'] != 'gl':
+    print('Skipping: ' + node.attrib['name'])
+    return
   outf.write('  GLenum ' + node.attrib['name'] + '\n')
 
 
@@ -54,8 +84,8 @@ def gen_group(outf, node):
 
 def gen_groups(outf, node):
   assert node.tag == 'groups'
-  for child in node:
-    gen_group(outf, child)
+  # for child in node:
+  #   gen_group(outf, child)
 
 
 def gen_enums(outf, node):
@@ -72,9 +102,17 @@ def gen_command(outf, node):
   params = []
   for child in node:
     if child.tag == 'param':
+      param_name = child.find('name')
+      if param_name.text == 'in':
+        param_name.text += '_'
       params.append(''.join(child.itertext()))
   
   decl += '(' + ', '.join(params) + ')'
+
+  if 'struct _cl_context *' in decl:
+    print('Skipping: ' + decl)
+    return
+
   outf.write('  ' + decl + '\n')
 
 
@@ -85,10 +123,10 @@ def gen_commands(outf, node):
     gen_command(outf, child)
 
 
-def gen_pxd(outf, root):
+def gen_pxd(outf, root, incl):
   gen_license_info(outf, root[0])
 
-  outf.write('cdef extern from <TODO.h>:\n')
+  outf.write('cdef extern from ' + incl + ':\n')
 
   for child in root[1:]:
     if child.tag == 'types':
@@ -108,6 +146,15 @@ def gen_pxd(outf, root):
 
 
 if __name__ == '__main__':
+  arg_parser = argparse.ArgumentParser()
+  arg_parser.add_argument('--include', '-i', type=str, default='<gl.h>')
+  arg_parser.add_argument('--output', '-o', type=str, default='opengl.pxd')
+  args = arg_parser.parse_args()
+
+  incl = args.include
+  if len(incl) == 0 or incl[0] not in ['\'', '"']:
+    incl = '"' + incl + '"'
+
   root = xml.etree.ElementTree.parse('extern/OpenGL-Registry/xml/gl.xml').getroot()
-  with open('opengl.pxd', 'w') as outf:
-    gen_pxd(outf, root)
+  with open(args.output, 'w') as outf:
+    gen_pxd(outf, root, incl)
